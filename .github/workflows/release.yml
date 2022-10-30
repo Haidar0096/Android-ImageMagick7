@@ -1,16 +1,11 @@
 name: Handle Release
 
 on:
-  release:
-    types: [created]
-  pull_request:
-    branches: [ master ]
-    types: [ closed ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-    if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.actor == 'molotovcherry' && github.head_ref == 'imupdate') || github.event_name == 'release'
 
     steps:
       - uses: actions/checkout@v2
@@ -18,60 +13,31 @@ jobs:
         with:
           ndk-version: r23
 
-      - name: Release build
+      - name: Build binaries and compress them
         run: |
+          ./.github-deps/change-settings.ps1 -params @{STATIC_BUILD="false"; BUILD_MAGICKPP="true"; HDRI_ENABLE= "false"; QUANTUM_DEPTH= "8"}
           ./build-release
-          Compress-Archive -CompressionLevel Optimal -Path "jniLibs/arm64-v8a" -DestinationPath "imagemagick-7-android-static.zip"
+          Compress-Archive -CompressionLevel Optimal -Path "jniLibs/arm64-v8a" -DestinationPath "imagemagick-7-android-Q8-shared.zip"
           rm -r jniLibs
-          ./.github-deps/change-to-shared-lib.ps1
+          
+          ./.github-deps/change-settings.ps1 -params @{STATIC_BUILD="false"; BUILD_MAGICKPP="true"; HDRI_ENABLE= "true"; QUANTUM_DEPTH= "8"}
           ./build-release
-          Compress-Archive -CompressionLevel Optimal -Path "jniLibs/arm64-v8a" -DestinationPath "imagemagick-7-android-shared.zip"
+          Compress-Archive -CompressionLevel Optimal -Path "jniLibs/arm64-v8a" -DestinationPath "imagemagick-7-android-Q8-HDRI-shared.zip"
+          rm -r jniLibs
+          
+          ./.github-deps/change-settings.ps1 -params @{STATIC_BUILD="false"; BUILD_MAGICKPP="true"; HDRI_ENABLE= "false"; QUANTUM_DEPTH= "16"}
+          ./build-release
+          Compress-Archive -CompressionLevel Optimal -Path "jniLibs/arm64-v8a" -DestinationPath "imagemagick-7-android-Q16-shared.zip"
+          rm -r jniLibs
+          
+          ./.github-deps/change-settings.ps1 -params @{STATIC_BUILD="false"; BUILD_MAGICKPP="true"; HDRI_ENABLE= "true"; QUANTUM_DEPTH= "16"}
+          ./build-release
+          Compress-Archive -CompressionLevel Optimal -Path "jniLibs/arm64-v8a" -DestinationPath "imagemagick-7-android-Q16-HDRI-shared.zip"
+          rm -r jniLibs
 
-      - name: Get latest release
-        if: github.event_name == 'release'
-        id: latest_release
-        uses: kaliber5/action-get-release@v1
+      - name: Create Release
+        uses: ncipollo/release-action@v1.11.1
         with:
-          token: ${{ github.token }}
-          latest: true
-
-      - name: Update release artifacts
-        if: github.event_name == 'release'
-        uses: xresloader/upload-to-github-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          file: 'imagemagick-7-android-*.zip'
-          release_id: ${{ steps.latest_release.outputs.id }}
-          overwrite: true
-          draft: false
-          tag_name: ${{ steps.latest_release.outputs.tag_name }}
-
-      - name: Get latest release tag
-        if: github.event_name == 'pull_request'
-        id: tag
-        run: |
-          $dir = Get-ChildItem -Directory -Path "ImageMagick-*" | Select-Object -Last 1
-          $tag = ($dir | Split-Path -Leaf).Substring(12)
-          Write-Host "::set-output name=TAG::$tag"
-
-      - uses: ncipollo/release-action@v1
-        if: github.event_name == 'pull_request'
-        with:
-          name: Android ImageMagick ${{ steps.tag.outputs.TAG }}
-          artifacts: 'imagemagick-7-android-*.zip'
-          body: |
-            Library built using default config.
-            
-            If you need a different config than default, please follow compilation instructions on main page to manually build it (or, fork the project, change the config file, and use github actions to build it)
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit: ${{ github.sha }}
-          tag: ${{ steps.tag.outputs.TAG }}
-             
-      - name: KMagick Dispatch
-        uses: peter-evans/repository-dispatch@v1
-        with:
-          token: ${{ secrets.REPO_SCOPED_TOKEN }}
-          repository: molotovcherry/kmagick
-          event-type: new-release
-          client-payload: '{"ref": "${{ github.ref }}", "sha": "${{ github.sha }}", "tag": "${{ steps.tag.outputs.TAG }}"}'
+          artifacts: "jniLibs/arm64-v8a/*.zip"
+          allowUpdates: true
+          tag: ImageMagick7-Android
